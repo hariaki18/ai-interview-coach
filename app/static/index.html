@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Interview Coach</title>
+<style>body{font:16px system-ui;background:#f4f7fb;color:#14243a;margin:0;padding:36px}main{max-width:740px;margin:auto;background:white;border-radius:18px;padding:32px;box-shadow:0 8px 30px #1a36521a}h1{margin:0 0 8px}p{color:#53647a}label{display:block;margin:20px 0 6px;font-weight:600}input,select,textarea{width:100%;box-sizing:border-box;padding:11px;border:1px solid #bcc9d7;border-radius:8px;font:inherit}textarea{min-height:130px}button{margin-top:16px;padding:12px 18px;border:0;border-radius:8px;background:#1763c6;color:white;font:inherit;cursor:pointer}button:disabled{opacity:.5}section{margin-top:24px;padding:18px;background:#edf4fd;border-radius:10px;white-space:pre-wrap;overflow-wrap:anywhere}#error{color:#a52828}</style></head>
+<body><main><h1>AI Interview Coach</h1><p>Practice one question and get actionable feedback.</p>
+<label for="role">Role</label><input id="role" value="QA Automation Engineer" maxlength="80">
+<label for="topic">Topic</label><input id="topic" value="Playwright with TypeScript" maxlength="80">
+<label for="level">Level</label><select id="level"><option>Beginner</option><option selected>Intermediate</option><option>Experienced</option></select>
+<button id="generate">Generate question</button><section id="question" hidden></section>
+<div id="answer-area" hidden><label for="answer">Your answer</label><textarea id="answer" maxlength="4000" placeholder="Write your answer first..."></textarea><button id="evaluate">Get feedback</button></div>
+<section id="feedback" hidden></section><p id="error" role="alert"></p></main>
+<script>
+let currentQuestion='';
+const el=id=>document.getElementById(id);
+async function send(path,data,button){el('error').textContent='';button.disabled=true;try{const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const result=await response.json();if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:'Request failed');return result}catch(error){el('error').textContent=error.message;return null}finally{button.disabled=false}}
+const fields=()=>({role:el('role').value,topic:el('topic').value,level:el('level').value});
+el('generate').onclick=async()=>{const result=await send('/api/question',fields(),el('generate'));if(!result)return;currentQuestion=result.question;el('question').textContent=currentQuestion;el('question').hidden=false;el('answer-area').hidden=false;el('feedback').hidden=true;el('answer').value=''};
+el('evaluate').onclick=async()=>{const result=await send('/api/feedback',{...fields(),question:currentQuestion,answer:el('answer').value},el('evaluate'));if(!result)return;el('feedback').textContent=result.feedback;el('feedback').hidden=false};
+</script></body></html>

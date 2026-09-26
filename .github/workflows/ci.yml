@@ -45,6 +45,29 @@ jobs:
     steps:
       - name: Get code
         uses: actions/checkout@v4
+      - name: Show OIDC subject for debugging
+        run: |
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import urllib.request
+
+          url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
+          token = os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
+          request = urllib.request.Request(
+              url + "&audience=sts.amazonaws.com",
+              headers={"Authorization": "Bearer " + token}
+          )
+          with urllib.request.urlopen(request) as response:
+              jwt = json.load(response)["value"]
+
+          payload = jwt.split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+          print("OIDC audience:", claims["aud"])
+          print("OIDC subject:", claims["sub"])
+          PY
 
       - name: Connect to AWS
         uses: aws-actions/configure-aws-credentials@v6.3.0

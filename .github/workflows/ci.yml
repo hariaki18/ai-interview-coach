@@ -1,7 +1,8 @@
-name: Test and build
+name: Test, build and deploy
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 jobs:
@@ -25,3 +26,102 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t ai-interview-coach .
+
+  deploy:
+    needs: test-and-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      AWS_REGION: ap-south-1
+      REGISTRY: 393686273121.dkr.ecr.ap-south-1.amazonaws.com
+      REPOSITORY: ai-interview-coach
+      INSTANCE_ID: i-08b1e544fdfc493d1
+
+    steps:
+      - name: Get code
+        uses: actions/checkout@v4
+
+      - name: Connect to AWS
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::393686273121:role/AIInterviewCoachGitHubDeployRole
+          aws-region: ap-south-1
+
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        run: |
+          IMAGE="$REGISTRY/$REPOSITORY:$GITHUB_SHA"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Deploy image to EC2
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          region = os.environ["AWS_REGION"]
+          registry = os.environ["REGISTRY"]
+          image = f'{registry}/{os.environ["REPOSITORY"]}:{os.environ["GITHUB_SHA"]}'
+          instance = os.environ["INSTANCE_ID"]
+
+          commands = [
+              "set -e",
+              f"aws ecr get-login-password --region {region} | docker login --username AWS --password-stdin {registry}",
+              f"docker pull {image}",
+              "docker rm -f ai-interview-coach || true",
+              (
+                  "docker run -d --name ai-interview-coach "
+                  "--restart unless-stopped -p 8080:8080 "
+                  "-e AWS_DEFAULT_REGION=ap-south-1 "
+                  "-e BEDROCK_MODEL_ID=global.amazon.nova-2-lite-v1:0 "
+                  f"{image}"
+              ),
+              "docker ps --filter name=ai-interview-coach"
+          ]
+
+          result = subprocess.run(
+              [
+                  "aws", "ssm", "send-command",
+                  "--region", region,
+                  "--instance-ids", instance,
+                  "--document-name", "AWS-RunShellScript",
+                  "--parameters", json.dumps({"commands": commands}),
+                  "--query", "Command.CommandId",
+                  "--output", "text"
+              ],
+              check=True, capture_output=True, text=True
+          )
+          command_id = result.stdout.strip()
+          print(f"SSM command ID: {command_id}", flush=True)
+
+          wait = subprocess.run(
+              [
+                  "aws", "ssm", "wait", "command-executed",
+                  "--region", region,
+                  "--command-id", command_id,
+                  "--instance-id", instance
+              ]
+          )
+
+          subprocess.run(
+              [
+                  "aws", "ssm", "get-command-invocation",
+                  "--region", region,
+                  "--command-id", command_id,
+                  "--instance-id", instance,
+                  "--query", "{Status:Status,Output:StandardOutputContent,Errors:StandardErrorContent}"
+              ],
+              check=True
+          )
+          if wait.returncode != 0:
+              raise SystemExit("EC2 deployment failed")
+          PY
